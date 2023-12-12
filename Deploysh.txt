@@ -1,0 +1,85 @@
+"#!/bin/bash
+set -e -o pipefail
+
+### Set up the environment
+export ENV=""${1}""
+export MODULE_NAME=""capreporting""
+export REGION=""${2:-us-east-1}""
+#
+cd ""$(dirname ""${0}"")/module/databricks"" || true
+source ""commands/apply.sh""
+source ""commands/pre.sh""
+source ""commands/replace_dbrx_provider.sh""
+cd ""${MODULE_NAME}"" || true
+
+### Add this command when you're upgrading from the legacy provider databrickslabs/databricks to databricks/databricks.
+### Not needed for new teams. Legacy teams can remove this after upgrading to the new provider, but leaving it here will not break anything
+#replace_dbrx_provider
+
+### Run templater then upload my spark python jobs to S3
+### ONLY NEEDED IF YOU'RE DEPLOYING A PYTHON SCRIPT FROM S3. Everything until ""Apply Terraform"" can be removed if you aren't using S3_PYSPARK job types
+### NOTE: Pyspark job task parameters will overwrite each other if passed in as python_params in the DAG, unlike notebook params which are concatenated.
+### If you have environment specific parameters, then all args should be passed via templater instead of in Terraform
+### Run templater script to fill in env vars
+rm -Rf artifacts/pyspark/out
+export SAMPLE_PYSPARK_ARG=""HELLO WORLD""
+chmod +x ./scripts/templater.sh
+./scripts/templater.sh artifacts/pyspark
+
+echo ""copying pyspark scripts to s3""
+#aws --profile saml s3 cp ""artifacts/pyspark/out"" ""${EDP_ARTIFACTS_REPO}/capreporting/pyspark-scripts"" --recursive --sse aws:kms --exclude ""*"" --include ""*.py"" || echo ""No scripts to deploy for ${MODULE_NAME}""
+aws --profile saml s3 cp ""artifacts/pyspark/libraries/jars"" ""${EDP_ARTIFACTS_REPO}/capreporting/libraries/jars"" --recursive --sse aws:kms --exclude ""*"" --include ""*.jar"" || echo ""cusotm libraries deploy for ${MODULE_NAME}""
+
+
+# DELETING JOBS CREATED BY LEGACY SERVICE PRINCPALS:
+# When deleting a job that was created by a legacy service princpal terraform will revert the owner
+# back to the service principal that created the job. If you are deploying with a new service principal
+# then you will get an error ""does not have Admin or Manage Run or Owner or View permissions on job"".
+# To get around this issue, the permissions created for the job should be removed from the terraform state as shown below.
+# https://github.com/databricks/terraform-provider-databricks/blob/master/docs/resources/permissions.md#job-usage
+# https://github.com/yessawab/terraform-provider-databricks/blob/60a5ae7a31ba60a5d3dee75fba37cbbcdef72b93/access/resource_permissions.go#L270-L289
+# tfenv terragrunt state rm 'module.demo_jobset_v2.databricks_permissions.multitask_job_usage[""aqua_tshirt_xs_notebook""]' || true
+
+# If terraform fails to unlock, this can be used to unlock the state
+# tfenv terragrunt force-unlock -force feb7c16b-7a98-3da8-4e9e-b5e31549d1b0 || true
+
+## Apply Terraform
+apply_tf
+#
+
+echo ""copying whl scripts to s3""
+#aws --profile saml s3 cp ""artifacts/datafiles"" ""${EDP_ARTIFACTS_REPO}/cap/datafiles"" --recursive --sse aws:kms --exclude ""*"" --include ""*"" || echo ""No scripts to deploy for ${MODULE_NAME}""
+#aws --profile saml s3 cp ""artifacts/datafiles"" ""${EDP_ARTIFACTS_REPO}/capreporting/datafiles"" --recursive --sse aws:kms --include ""*.csv"" || echo ""No scripts to deploy for ${MODULE_NAME}""
+
+
+
+# ## Take the output of your jobs and export them to environment variables
+export tf_output=$(terraform output -json)
+
+echo ""tf output:""
+echo ""${tf_output}""
+
+## Iterate over the TF output and get our custom job outputs
+for row in $(echo ""${tf_output}"" | jq -r '.[] | @base64'); do
+    ## Iterate over each job
+    for job in $(echo ${row} | base64 --decode | jq -r '.value[] | @base64'); do
+      _jq() {
+        echo ${job} | base64 --decode | jq -r ${1}
+      }
+      echo ""Job name: $(_jq '.job_name') job_id = $(_jq '.job_id')"" || true
+      export ""$(_jq '.job_name')""=""$(_jq '.job_id')"" || true ## Export the job as an environment variable
+    done
+done
+
+### Logging/debugging statements
+echo ""destiny_v3_job_demo job ID: ${destiny_v3_job_demo}""
+# echo ""destiny_v3_job_demo_scala_snowflake job ID: ${destiny_v3_job_demo_scala_snowflake}""
+
+### Run templater script to fill in job IDs
+rm -Rf artifacts/dags/out
+./scripts/templater.sh artifacts/dags
+
+## Upload the DAGS to S3 and MWAA
+echo ""Copying airflow dags to ${EDP_ARTIFACTS_REPO}/airflow/dags-v2/${MODULE_NAME} ...""
+aws --profile saml s3 cp ""artifacts/dags/out"" ""${EDP_ARTIFACTS_REPO}/dags-v2/capreporting"" --recursive --sse aws:kms --exclude ""*"" --include ""*.py"" || echo ""No dags to deploy for ${MODULE_NAME}""
+echo ""Copying airflow dags complete"""

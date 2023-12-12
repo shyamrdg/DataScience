@@ -1,0 +1,791 @@
+import sys
+import datetime
+import logging
+MSG_FORMAT = '%(asctime)s %(levelname)s %(name)s: %(message)s'
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+logging.basicConfig(format=MSG_FORMAT, datefmt=DATETIME_FORMAT)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+env                = dbutils.widgets.get('env')
+catalog            = dbutils.widgets.get('catalog')
+clntrpt            = dbutils.widgets.get('cap_stg_schema')
+cap_rpt_schema     = dbutils.widgets.get('cap_rpt_schema')
+ccw_schema_catalog = dbutils.widgets.get('ccw_schema_catalog')
+ccw_schema         = dbutils.widgets.get('ccw_schema')
+
+class CAPSchemaUtilis(object):
+    """"""main Class""""""
+    def __init__(self):
+        """""" 
+        Constructor for the class `CAPSchemaUtilis`
+        """"""
+        self.env = env
+        
+    def create_table(self):
+        try:
+            query=""""""drop table if exists {catalog}.{cap_rpt_schema}.BLD_RDS_UM_PROG_DRUG """"""
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema
+                                )
+            result=spark.sql(query)
+            logger.info('drop result ==> ' + result.__str__())                         
+             
+            query=""""""create table if not exists {catalog}.{cap_rpt_schema}.BLD_RDS_UM_PROG_DRUG (
+            UM_PROG_VRSN_KEY                  INT,
+            UM_PROG_KEY                       INT,
+            UM_DRUG_LIST_SEQ_CD               string,
+            UM_PROG_VRSN_DRUG_LIST_KEY        INT,
+            DRUG_LIST_KEY                     INT,
+            UM_PROG_VRSN_DRUG_LIST_EFF_DT     TIMESTAMP,
+            UM_PROG_VRSN_DRUG_LIST_EXPIRN_DT  TIMESTAMP,
+            DRUG_LIST_VRSN_DRUG_LIST_VRSN_KEY INT,
+            DRUG_LIST_VRSN_VRSN_NUM           INT,
+            DRUG_LIST_ID                      INT,
+            DRUG_LIST_NM                      string,
+            DRUG_LIST_CTGRY_CD                string,
+            DRUG_LIST_VRSN_ID                 INT,
+            UM_PKG_TY_CD                      string,
+            DRUG_CLSS_CD                      string,
+            DRUG_LIST_VRSN_EFF_DT             TIMESTAMP,
+            DRUG_LIST_VRSN_EXPIRN_DT          TIMESTAMP,
+            DRUG_LIST_DRUG_KEY                INT,
+            DRUG_VRSN_KEY                     INT,
+            DRUG_CTGRY_CD                     string,
+            DRUG_LIST_DRUG_EFF_DT             TIMESTAMP,
+            DRUG_LIST_DRUG_EXPIRN_DT          TIMESTAMP,
+            DRUG_LIST_DRUG_DRUG_LIST_VRSN_KEY BIGINT,
+            DRUG_KEY                          INT,
+            DRUG_VRSN_VRSN_NUM                INT,
+            DRUG_VRSN_ID                      INT,
+            DRUG_ID_TY_CD                     string,
+            NDC_NUM                           string, 
+            DRUG_VRSN_EFF_DT                  TIMESTAMP,
+            DRUG_VRSN_EXPIRN_DT               TIMESTAMP,
+            UM_PROG_VRSN_CRITR_ID             INT,
+            UM_PROG_VRSN_CRITR_NM             string,
+            UM_PROG_VRSN_CRITR_TXT            string,
+            UM_PROG_ELEMNT_VAL_TXT            string,
+            UM_PROG_EDIT_TY_CD                string,
+            UM_PROG_ELEMNT_CD                 string,
+            UM_PROG_ELEMNT_TY_CD              string,
+            UM_PROG_EDIT_ELEMNT_VAL_TXT       string,
+            UM_PROG_EDIT_ELEMNT_VAL_KEY       string,
+            UM_PROG_VRSN_CRITR_KEY            string,
+            ALT_DRUG_SQNC_NUM                 INT,
+            ALT_DRUG_NM                       string,
+            UM_PROG_VRSN_MINR_ID              INT,
+            UM_PROG_VRSN_MAJ_ID               INT
+            )
+            USING DELTA""""""
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema \
+                                )
+            result=spark.sql(query)
+            logger.info('create result ==> ' + result.__str__())
+            
+            query=""""""drop table if exists {catalog}.{cap_rpt_schema}.BLD_RDS_UM_PROG_DRUG_tmp""""""
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema \
+                                )
+            result=spark.sql(query)
+            logger.info('drop result ==> ' + result.__str__())  
+
+            query="""""" CREATE TABLE IF NOT EXISTS {catalog}.{cap_rpt_schema}.BLD_RDS_UM_PROG_DRUG_tmp
+            SELECT *from(
+            with prog_vrsn as 
+            (select distinct
+            um_prog_key  ,
+            um_prog_vrsn_key,
+            um_prog_vrsn_minr_id,
+            um_prog_vrsn_maj_id    
+            from  {catalog}.{clntrpt}.phrmrdsd_o_um_prog_vrsn_mv
+            where wrkflw_stat_cd = 'A' 
+            and   um_prog_vrsn_key is not null
+            ),
+            alt_drug_temp as
+            (select distinct
+            um_prog_vrsn_key,
+            sqnc_num,
+            trim(REGEXP_REPLACE(alt_drug_nm , ""[^a-zA-Z0-9.]+"", "" "")) as alt_drug_nm,
+            Rank() over (Partition BY um_prog_vrsn_key ORDER BY sqnc_num DESC ) AS rank
+            from   {catalog}.{clntrpt}.phrmrdsd_o_um_prog_vrsn_alt_drug_mv m
+            where  actv_ind = 'Y'
+            and um_prog_vrsn_key is not null
+            ),
+            alt_drug_final as    
+            (select * 
+            from alt_drug_temp
+            where rank<=3
+            ),
+            prog_drug_list_vrsn as
+            (select distinct
+            um_prog_vrsn_key,
+            um_drug_list_seq_cd,
+            um_prog_vrsn_drug_list_key,
+            drug_list_key,
+            eff_dt,
+            expirn_dt 
+            from {catalog}.{clntrpt}.phrmrdsd_o_um_prog_vrsn_drug_list_mv
+            where actv_ind='Y'
+            and (um_prog_vrsn_key is not null or drug_list_key is not null)
+            ),
+            drug_list_vrsn_mv as
+            (select distinct
+            drug_list_key,
+            drug_list_vrsn_key,
+            vrsn_num,
+            drug_list_id,
+            drug_list_nm,
+            drug_list_ctgry_cd,
+            drug_list_vrsn_id,
+            um_pkg_ty_cd,
+            drug_clss_cd,
+            eff_dt,
+            expirn_dt
+            from {catalog}.{clntrpt}.phrmrdsd_o_drug_list_vrsn_mv
+            where drug_list_key is not null
+            or drug_list_vrsn_key is not null
+            ),
+            drug_list_drug_mv as
+            (select distinct
+            drug_list_drug_key,
+            drug_vrsn_key,
+            drug_ctgry_cd,
+            eff_dt,                            
+            expirn_dt,                         
+            drug_list_vrsn_key
+            from {catalog}.{clntrpt}.phrmrdsd_o_drug_list_drug_mv
+            where drug_vrsn_key is not null 
+            or drug_list_vrsn_key is not null
+            ),
+            drug_vrsn_mv as
+            (select distinct
+            drug_vrsn_key,
+            drug_key,
+            vrsn_num,                           
+            drug_vrsn_id,
+            drug_id_ty_cd,
+            drug_id,                            
+            eff_dt,                             
+            expirn_dt
+            from {catalog}.{clntrpt}.phrmrdsd_o_drug_vrsn_mv
+            where drug_id_ty_cd = 'NDC'
+            and drug_vrsn_key is not null
+            ),
+            prog_vrsn_critr_drug_mv as
+            (select distinct
+            um_prog_vrsn_critr_key,
+            drug_vrsn_key
+            from {catalog}.{clntrpt}.phrmrdsd_o_um_prog_vrsn_critr_drug_mv
+            where drug_vrsn_key is not null
+            ),
+            prog_vrsn_critr_elemnt_mv as
+            (select distinct
+                     um_prog_vrsn_critr_key,
+                     um_prog_edit_elemnt_val_key,
+                     trim(REGEXP_REPLACE(um_prog_elemnt_val_txt , ""[^a-zA-Z0-9.]+"", "" "")) as um_prog_elemnt_val_txt
+            from {catalog}.{clntrpt}.phrmrdsd_o_um_prog_vrsn_critr_elemnt_mv
+            where um_prog_vrsn_critr_key is not null
+            ),
+            prog_edit_elemnt_val_mv as
+            (select distinct
+                    um_prog_edit_elemnt_val_key ,
+                    trim(REGEXP_REPLACE(um_prog_edit_elemnt_val_txt , ""[^a-zA-Z0-9.]+"", "" "")) as um_prog_edit_elemnt_val_txt,
+                    um_prog_edit_elemnt_key
+            from  {catalog}.{clntrpt}.phrmrdsd_o_um_prog_edit_elemnt_val_mv
+            where um_prog_edit_elemnt_val_txt like 'MAX%'
+            and um_prog_edit_elemnt_val_key is not null
+            ),
+            prog_edit_elemnt_mv as
+            (select distinct
+                    um_prog_edit_elemnt_key ,
+                    um_prog_edit_ty_cd      ,      
+                    um_prog_elemnt_cd       ,       
+                    um_prog_elemnt_ty_cd 
+            from {catalog}.{clntrpt}.phrmrdsd_o_um_prog_edit_elemnt_mv
+            where um_prog_edit_elemnt_key is not null
+            ),
+  
+            BLD_RDS_UM_PROG_DRUG as 
+            (
+            select distinct
+                e.um_prog_vrsn_key,
+                e.um_prog_key,
+                a.um_drug_list_seq_cd                as um_drug_list_seq_cd,
+                a.um_prog_vrsn_drug_list_key,
+                a.drug_list_key,
+                a.eff_dt                             as um_prog_vrsn_drug_list_eff_dt,
+                a.expirn_dt                          as um_prog_vrsn_drug_list_expirn_dt,
+                ''                                   as drug_list_vrsn_drug_list_vrsn_key,
+                ''                                   as drug_list_vrsn_vrsn_num,
+                b.drug_list_id,
+                b.drug_list_nm,
+                b.drug_list_ctgry_cd,
+                ''                                   as drug_list_vrsn_id,
+                b.um_pkg_ty_cd,
+                b.drug_clss_cd,
+                ''                                   as drug_list_vrsn_eff_dt,
+                ''                                   as drug_list_vrsn_expirn_dt,
+                0                                    as drug_list_drug_key,
+                0                                    as drug_vrsn_key,
+                c.drug_ctgry_cd,
+                c.eff_dt                             as drug_list_drug_eff_dt,
+                c.expirn_dt                          as drug_list_drug_expirn_dt,
+                cast(c.drug_list_vrsn_key as bigint) as drug_list_drug_drug_list_vrsn_key,
+                d.drug_key,
+                d.vrsn_num                           as drug_vrsn_vrsn_num,
+                d.drug_vrsn_id,
+                d.drug_id_ty_cd,
+                d.drug_id                            as ndc_num,
+                d.eff_dt                             as drug_vrsn_eff_dt,
+                d.expirn_dt                          as drug_vrsn_expirn_dt,
+                ''                                   as um_prog_vrsn_critr_id,
+                ''                                   as um_prog_vrsn_critr_nm,
+                ''                                   as um_prog_vrsn_critr_txt,
+                h.um_prog_elemnt_val_txt             as um_prog_elemnt_val_txt,
+                k.um_prog_edit_ty_cd                 as um_prog_edit_ty_cd,
+                k.um_prog_elemnt_cd                  as um_prog_elemnt_cd,
+                k.um_prog_elemnt_ty_cd               as um_prog_elemnt_ty_cd,
+                i.um_prog_edit_elemnt_val_txt        as um_prog_edit_elemnt_val_txt,
+                ''                                   as um_prog_edit_elemnt_val_key,
+                ''                                   as um_prog_vrsn_critr_key,
+                f.sqnc_num                           as alt_drug_sqnc_num,
+                f.alt_drug_nm                        as alt_drug_nm,
+                e.um_prog_vrsn_minr_id               as um_prog_vrsn_minr_id,
+                e.um_prog_vrsn_maj_id                as um_prog_vrsn_maj_id
+               
+            from    prog_vrsn                                          e
+
+                    left join 
+                    alt_drug_final                                     f
+            on      e.um_prog_vrsn_key = f.um_prog_vrsn_key
+                     
+                     left join 
+                     prog_drug_list_vrsn                                a
+            on      e.um_prog_vrsn_key = a.um_prog_vrsn_key 
+
+                    left join 
+                    drug_list_vrsn_mv                                  b
+            on      a.drug_list_key = b.drug_list_key
+
+                    left join 
+                    drug_list_drug_mv                                  c
+            on      b.drug_list_vrsn_key = c.drug_list_vrsn_key
+
+                    left join
+                    drug_vrsn_mv                                       d
+            on      c.drug_vrsn_key = d.drug_vrsn_key
+                     
+                    left join 
+                    prog_vrsn_critr_drug_mv                            j
+            on      c.drug_vrsn_key = j.drug_vrsn_key
+
+                    left join 
+                    prog_vrsn_critr_elemnt_mv                          h
+            on      j.um_prog_vrsn_critr_key = h.um_prog_vrsn_critr_key 
+
+                    left join 
+                    prog_edit_elemnt_val_mv                            i
+            on      h.um_prog_edit_elemnt_val_key = i.um_prog_edit_elemnt_val_key
+
+                    left join 
+                    prog_edit_elemnt_mv                                k
+            on      i.um_prog_edit_elemnt_key = k.um_prog_edit_elemnt_key
+            ) select * from BLD_RDS_UM_PROG_DRUG
+            )
+            """"""
+            query = query.format(catalog=catalog,cap_rpt_schema=cap_rpt_schema, \
+                                clntrpt=clntrpt \
+                                )
+            result=spark.sql(query)
+            logger.info('create BLD_RDS_UM_PROG_DRUG_tmp result ==> ' + result.__str__())
+                
+        except Exception as error:
+           msg='Table creation error'+'=>'+'BLD_RDS_UM_PROG_DRUG '
+           logger.error('create_main_table Exception for ==>\n' + msg.__str__())
+           logger.error('create_main_table Exception for ==>\n' + error.__str__())
+           sys.exit(1)
+           
+           
+    def insert_overwrite_table(self):
+        try:
+            query = """"""insert overwrite table {catalog}.{cap_rpt_schema}.BLD_RDS_UM_PROG_DRUG 
+            select * from {catalog}.{cap_rpt_schema}.BLD_RDS_UM_PROG_DRUG_tmp""""""
+            query = query.format(catalog=catalog, \
+                            cap_rpt_schema=cap_rpt_schema
+                            )  
+            result = spark.sql(query)
+            logger.info('insert overwrite result ==> ' + result.__str__())            
+                  
+        except Exception as error:
+            msg='insert error'+'=>'+'BLD_RDS_UM_PROG_DRUG'
+            logger.error('insert_table Exception for ==>\n' + msg.__str__())
+            logger.error('insert_table Exception for ==>\n' + error.__str__())
+            sys.exit(1)   
+           
+def main():
+    """"""Main Function""""""
+    logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+    ext_utils = CAPSchemaUtilis()
+    ext_utils.create_table()
+    ext_utils.insert_overwrite_table()
+    logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+
+main()
+
+import sys
+import datetime
+import logging
+MSG_FORMAT = '%(asctime)s %(levelname)s %(name)s: %(message)s'
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+logging.basicConfig(format=MSG_FORMAT, datefmt=DATETIME_FORMAT)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+env                = dbutils.widgets.get('env')
+catalog            = dbutils.widgets.get('catalog')
+rebate             = dbutils.widgets.get('cap_stg_schema')
+cap_rpt_schema     = dbutils.widgets.get('cap_rpt_schema')
+ccw_schema_catalog = dbutils.widgets.get('ccw_schema_catalog')
+ccw_schema         = dbutils.widgets.get('ccw_schema')
+
+class CAPSchemaUtilis(object):
+    """"""main Class""""""
+    def __init__(self):
+        """"""
+        Constructor for the class `CAPSchemaUtilis`
+        """"""
+        self.env = env
+        
+    def create_table(self):
+        try:
+            query=""""""drop table if exists {catalog}.{cap_rpt_schema}.BLD_UM_SAVE_RPT""""""
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema
+                                )
+            result=spark.sql(query)
+            logger.info('drop result ==> ' + result.__str__()) 
+                        
+             
+            query=""""""create table if not exists {catalog}.{cap_rpt_schema}.BLD_UM_SAVE_RPT(
+              CRET_TS		               TIMESTAMP,	
+              RPT_MTH_START_DT		       TIMESTAMP,	
+              RPT_MTH_END_DT			    TIMESTAMP,	
+              RPT_SAVE_ACCRL_DAY_CNT		INT,	
+              RPT_SAVE_ACCRL_MTH_START_DT   TIMESTAMP,	
+              RPT_SAVE_ACCRL_MTH_END_DT		TIMESTAMP,	
+              RPT_SAVE_ACCRL_MTH_DAY_CNT	INT,
+              SAVE_YR_MTH_NUM			   string,	
+              UM_SAVE_NM				string,	
+              DRUG_FREQ_TY_NM			string,	
+              BUS_SEG_ID				string,	
+              FINANCL_SUB_SEG_ID			string,	
+              ENTPR_CUST_ID				string,	
+              CVRG_PHRM_IND			       string,	
+              CVRG_MED_IND			       string,	
+              UM_ACT_RCD_TY_NM		       string,	
+              UM_ACT_RCD_SUBTY_NM			string,	
+              UM_ACT_RCD_SRC_TBLNM			string,	
+              UM_ACT_RCD_SEC_SUBTY_TY_NM	       string,	
+              UM_ACT_DENY_IND			    string,	
+              UM_ACT_PRDT_CTGRY_CD		       string,	
+              UM_ACT_EOC_ID			       string,	
+              UM_ACT_SVC_ID			       string,	
+              UM_ACT_SVC_ID_TY_NM			string,	
+              UM_ACT_SVC_DT			       TIMESTAMP,	
+              UM_ACT_GCN			       string,	
+              UM_ACT_BRND_NM			string,	
+              UM_ACT_GENRC_NM			string,	
+              UM_ACT_LBL_NM			       string,
+              UM_ACT_SRC_RTE_OF_ADMIN_CD		string,	
+              UM_ACT_SPCF_TC_CD		       string,	
+              UM_ACT_NDC				string,	
+              UM_ACT_NDC_PRDT_CD			string,	
+              UM_ACT_PROC_CD			string,	
+              UM_ACT_PROC_TY_CD			string,	
+              UM_ACT_SPECLTY_DRUG_IND		string,	
+              UM_ACT_SPCF_TC_DESC			string,	
+              UM_ACT_SPCF_MINR_GRP_DESC		string,	
+              UM_ACT_SPCF_SPLTY_CONDN_DESC	string,	
+              UM_ACT_INGRDNT_COST_AMT		DECIMAL(15,2),	
+              RBT_UM_ACT_INGRDNT_COST_AMT		DECIMAL(15,2),	
+              UM_ACT_DAY_SUPLY_QTY			DECIMAL(14,3),	
+              UM_ACT_DRUG_LIST_CLSS_NM		string,	
+              UM_ACT_DRUG_CATLG_STEP_NM		INT,	
+              UM_ACT_SAVE_PCTG	              DECIMAL(14,3),	
+              UM_RSLT_END_DT			TIMESTAMP,	
+              UM_RSLT_RCD_TY_NM		       string,	
+              UM_RSLT_RCD_SUBTY_NM			string,	
+              UM_RSLT_PRDT_CTGRY_CD		string,	
+              UM_RSLT_RCD_SRC_TBLNM		string,	
+              UM_RSLT_EOC_ID			string,	
+              UM_RSLT_SVC_ID			string,	
+              UM_RSLT_SVC_ID_TY_NM			string,	
+              UM_RSLT_SVC_DT			TIMESTAMP,	
+              UM_RSLT_GCN				string,	
+              UM_RSLT_BRND_NM			string,	
+              UM_RSLT_GENRC_NM		       string,	
+              UM_RSLT_LBL_NM			string,	
+              UM_RSLT_SRC_RTE_OF_ADMIN_CD		string,	
+              UM_RSLT_SPCF_TC_CD			string,	
+              UM_RSLT_NDC				string,	
+              UM_RSLT_NDC_PRDT_CD			string,	
+              UM_RSLT_PROC_CD			string,	
+              UM_RSLT_PROC_TY_CD			string,	
+              UM_RSLT_SPECLTY_DRUG_IND		string,	
+              UM_RSLT_SPCF_TC_DESC			string,	
+              UM_RSLT_SPCF_MINR_GRP_DESC		string,	
+              UM_RSLT_SPCF_SPLTY_CONDN_DESC	 string,	
+              UM_RSLT_INGRDNT_COST_AMT		DECIMAL(15,2),	
+              RBT_UM_RSLT_INGRDNT_COST_AMT	DECIMAL(15,2),	
+              UM_RSLT_DAY_SUPLY_QTY		    DECIMAL(14,3),	
+              UM_RSLT_THRPY_CST_PER_DAY_AMT 	DECIMAL(15,2),	
+              RBT_UM_THRPY_CST_PER_DAY_AMT	DECIMAL(15,2),	
+              UM_RSLT_DRUG_LIST_CLSS_NM		string,	
+              UM_RSLT_DRUG_CATLG_STEP_NM		INT,	
+              UM_RSLT_SAVE_PCT			DECIMAL(14,3),	
+              UM_RSLT_MTH_SAVE_AMT			DECIMAL(15,2),	
+              RBT_UM_RSLT_MTH_SAVE_AMT		DECIMAL(15,2),
+              CLIENT_ACCT_NUM                    string,
+              DENIALS	                     INT,
+              TOTAL_AUTH	                     INT,
+              TOT_ST_SVC_ID_CNT		       INT,
+              TOT_ST_ACT_SVC_ID_CNT	       INT,
+              DRUG_SELTN_TY_NM                   string
+              )
+            USING DELTA""""""
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema \
+                                )
+            result=spark.sql(query)
+            logger.info('create result ==> ' + result.__str__())
+            
+            query=""""""drop table if exists {catalog}.{cap_rpt_schema}.BLD_UM_SAVE_RPT_TMP""""""
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema \
+                                )
+            result=spark.sql(query)
+            logger.info('drop result ==> ' + result.__str__()) 
+
+            query=""""""CREATE TABLE IF NOT EXISTS {catalog}.{cap_rpt_schema}.BLD_UM_SAVE_RPT_TMP
+            SELECT * from (
+            with um_save_rpt_q1 as 
+            (select distinct 
+               cret_ts														
+             , rpt_mth_start_dt									
+             , rpt_mth_end_dt										
+             , rpt_save_accrl_day_cnt						
+             , rpt_save_accrl_mth_start_dt				
+             , rpt_save_accrl_mth_end_dt					
+             , rpt_save_accrl_mth_day_cnt				
+             , save_yr_mth_num										
+             , um_save_nm												
+             , drug_freq_ty_nm										
+             , bus_seg_id												
+             , financl_sub_seg_id								
+             , entpr_cust_id											
+             , cvrg_phrm_ind											
+             , cvrg_med_ind											
+             , um_act_rcd_ty_nm									
+             , um_act_rcd_subty_nm								
+             , um_act_rcd_src_tblnm							
+             , um_act_rcd_sec_subty_ty_nm				
+             , um_act_deny_ind										
+             , um_act_prdt_ctgry_cd							
+             , um_act_eoc_id											
+             , um_act_svc_id											
+             , um_act_svc_id_ty_nm								
+             , um_act_svc_dt
+             , concat(substring(um_act_svc_dt, 1, 4), substring(um_act_svc_dt, 6, 2)) as um_act_svc_yr_mth
+             , um_act_gcn												
+             , um_act_brnd_nm										
+             , um_act_genrc_nm										
+             , um_act_lbl_nm										
+             , um_act_src_rte_of_admin_cd				
+             , um_act_spcf_tc_cd									
+             , um_act_ndc												
+             , um_act_ndc_prdt_cd								
+             , um_act_proc_cd										
+             , um_act_proc_ty_cd									
+             , um_act_speclty_drug_ind						
+             , um_act_spcf_tc_desc								
+             , um_act_spcf_minr_grp_desc					
+             , um_act_spcf_speclty_condn_desc      as um_act_spcf_splty_condn_desc		
+             , um_act_ingrdnt_cost_amt						
+             , rbt_um_act_ingrdnt_cost_amt				
+             , um_act_day_suply_qty						
+             , um_act_drug_list_clss_nm					
+             , um_act_drug_catlg_step_nm					
+             , um_act_save_pctg									
+             , um_rslt_end_dt										
+             , um_rslt_rcd_ty_nm									
+             , um_rslt_rcd_subty_nm							
+             , um_rslt_prdt_ctgry_cd							
+             , um_rslt_rcd_src_tblnm							
+             , um_rslt_eoc_id										
+             , um_rslt_svc_id										
+             , um_rslt_svc_id_ty_nm							
+             , um_rslt_svc_dt										
+             , um_rslt_gcn												
+             , um_rslt_brnd_nm										
+             , um_rslt_genrc_nm									
+             , um_rslt_lbl_nm										
+             , um_rslt_src_rte_of_admin_cd				
+             , um_rslt_spcf_tc_cd								
+             , um_rslt_ndc												
+             , um_rslt_ndc_prdt_cd								
+             , um_rslt_proc_cd										
+             , um_rslt_proc_ty_cd								
+             , um_rslt_speclty_drug_ind					
+             , um_rslt_spcf_tc_desc							
+             , um_rslt_spcf_minr_grp_desc				
+             , um_rslt_spcf_speclty_condn_desc      as um_rslt_spcf_splty_condn_desc		
+             , um_rslt_ingrdnt_cost_amt					
+             , rbt_um_rslt_ingrdnt_cost_amt			
+             , um_rslt_day_suply_qty							
+             , um_rslt_thrpy_cost_per_day_amt	    as um_rslt_thrpy_cst_per_day_amt	
+             , rbt_um_rslt_thrpy_cost_per_day_amt	as rbt_um_thrpy_cst_per_day_amt
+             , um_rslt_drug_list_clss_nm					
+             , um_rslt_drug_catlg_step_nm				
+             , um_rslt_save_pct									
+             , um_rslt_mth_save_amt							
+             , rbt_um_rslt_mth_save_amt	
+             , drug_seltn_ty_nm
+ 
+            from       {catalog}.{rebate}.um_save_rpt
+            where      bus_seg_id in ('0215','0518')
+            ),
+
+            clnt_acct_data as (
+            select distinct 
+                   client_acct_num
+                 , entpr_cust_id
+                 , concat(substring(svc_dt, 1, 4), substring(svc_dt, 6, 2)) as svc_yr_mth 
+            from   {catalog}.{rebate}.um_save_mbr_hist_28
+            where  entpr_cust_id is not null and client_acct_num is not null and svc_dt is not null and bus_seg_id in ('0215','0518')
+            ),
+
+            eoc_data_q2 as (
+            select  
+           'PA_HUB' 							    as chnl_src_cd
+             , em.entpr_cust_id  
+             , ed.ndc
+             , em.authzn_id
+             , em.eoc_id     
+             , CAST(em.authzn_req_ts AS DATE) SVC_DT
+             , concat(em.entpr_cust_id, ed.ndc, coalesce(em.authzn_id, ''), coalesce(em.eoc_id, ''), coalesce(CAST(em.authzn_req_ts AS STRING), '')) as cust_ndc_eoc_id
+             , concat(substring(em.authzn_req_ts, 1, 4), substring(em.authzn_req_ts, 6, 2)) as auth_svc_yr_mth
+             , ed.diag_cd_1
+             , ed.diag_cd_2
+             , ed.diag_cd_3
+             , ed.diag_cd_4
+             , ed.diag_cd_5
+             , CASE when em.outcm_cd='D'   then 'DENY' 
+            when em.outcm_cd='A'   then 'APPR' 
+            when em.outcm_cd='P'   then 'PARTIAL' 
+            else em.outcm_cd 
+            END 			    as decision
+            from  {ccw_schema_catalog}.{ccw_schema}.eoc_mast  em 
+                  inner join 
+                  {ccw_schema_catalog}.{ccw_schema}.eoc_drug ed 
+            on    em.eoc_id = ed.eoc_id and em.client_id = ed.client_id 
+                    and  em.client_acct_num = ed.client_acct_num and em.eoc_stat_cd = ed.eoc_stat_cd
+                    and  em.curr_rcd_ind = 'Y' and ed.curr_rcd_ind = 'Y' 
+                    and  em.decsn_rte_desc not in  ('Abort','Administrative') 
+                    and  em.bus_seg_cd in ('0215','0518')
+                    and  em.cust_chnl_src_cd in ('FCTS','CED','PYSL')
+            where ed.ndc is not null and em.entpr_cust_id is not null and to_date(em.authzn_req_ts) >=  to_date(date_sub(to_date(current_timestamp()),365))
+            ),
+
+            eoc_denials as (
+            select ndc
+                 , count(distinct cust_ndc_eoc_id)            as denials
+            from   eoc_data_q2
+            where  decision = 'DENY'
+            group by ndc
+            ),
+
+            eoc_denial_tot as (
+            select ndc
+                 , count(distinct cust_ndc_eoc_id)            as total_auth
+            from   eoc_data_q2
+            group by ndc
+            ),
+
+            st_conv_data as (
+            select a.ndc
+                  ,sum(a.tot)   as tot_st_svc_id_cnt
+                  ,sum(a.conv)  as tot_st_act_svc_id_cnt
+            from 
+            (
+            select a.entpr_cust_id
+             , a.ndc
+             , max(case when a.svc_id is null then 0.00 else 1.00 end)        as tot
+             , max(case when b.um_act_svc_id is null then 0.00 else 1.00 end) as conv
+         
+            from {catalog}.{rebate}.um_save_mbr_hist_28 a
+            left join {catalog}.{rebate}.um_save_mbr_hist_28 b 
+
+            on a.entpr_cust_id=b.entpr_cust_id 
+            and b.rcd_ty_nm in ('GST REJ PAID CLAIM','GST LTR PAID CLAIM')
+            and a.svc_id=b.um_act_svc_id
+
+            where a.drug_seltn_ty_nm='DS_GST' 
+            and a.entpr_cust_id is not null
+            and a.svc_id is not null
+            and to_date(a.svc_dt) >=  to_date(date_sub(to_date(current_timestamp()),365))
+
+            group by 
+                  a.entpr_cust_id
+                , a.ndc
+            )a
+            group by 
+                  a.ndc
+            )
+            ,
+
+            um_save_rpt_temp as (
+            select distinct
+            a.cret_ts														
+            , a.rpt_mth_start_dt									
+             , a.rpt_mth_end_dt										
+             , a.rpt_save_accrl_day_cnt						
+             , a.rpt_save_accrl_mth_start_dt				
+             , a.rpt_save_accrl_mth_end_dt					
+             , a.rpt_save_accrl_mth_day_cnt				
+             , a.save_yr_mth_num										
+             , a.um_save_nm												
+             , a.drug_freq_ty_nm										
+             , a.bus_seg_id												
+             , a.financl_sub_seg_id								
+             , a.entpr_cust_id											
+             , a.cvrg_phrm_ind											
+             , a.cvrg_med_ind											
+             , a.um_act_rcd_ty_nm									
+             , a.um_act_rcd_subty_nm								
+             , a.um_act_rcd_src_tblnm							
+             , a.um_act_rcd_sec_subty_ty_nm				
+             , a.um_act_deny_ind										
+             , a.um_act_prdt_ctgry_cd							
+             , a.um_act_eoc_id											
+             , a.um_act_svc_id											
+             , a.um_act_svc_id_ty_nm								
+             , a.um_act_svc_dt											
+             , a.um_act_gcn												
+             , a.um_act_brnd_nm										
+             , a.um_act_genrc_nm										
+             , a.um_act_lbl_nm										
+             , a.um_act_src_rte_of_admin_cd				
+             , a.um_act_spcf_tc_cd									
+             , a.um_act_ndc												
+             , a.um_act_ndc_prdt_cd								
+             , a.um_act_proc_cd										
+             , a.um_act_proc_ty_cd									
+             , a.um_act_speclty_drug_ind						
+             , a.um_act_spcf_tc_desc								
+             , a.um_act_spcf_minr_grp_desc					
+             , a.um_act_spcf_splty_condn_desc		
+             , a.um_act_ingrdnt_cost_amt						
+             , a.rbt_um_act_ingrdnt_cost_amt				
+             , a.um_act_day_suply_qty						
+             , a.um_act_drug_list_clss_nm					
+             , a.um_act_drug_catlg_step_nm					
+             , a.um_act_save_pctg									
+             , a.um_rslt_end_dt										
+             , a.um_rslt_rcd_ty_nm									
+             , a.um_rslt_rcd_subty_nm							
+             , a.um_rslt_prdt_ctgry_cd							
+             , a.um_rslt_rcd_src_tblnm							
+             , a.um_rslt_eoc_id										
+             , a.um_rslt_svc_id										
+             , a.um_rslt_svc_id_ty_nm							
+             , a.um_rslt_svc_dt										
+             , a.um_rslt_gcn												
+             , a.um_rslt_brnd_nm										
+             , a.um_rslt_genrc_nm									
+             , a.um_rslt_lbl_nm										
+             , a.um_rslt_src_rte_of_admin_cd				
+             , a.um_rslt_spcf_tc_cd								
+             , a.um_rslt_ndc												
+             , a.um_rslt_ndc_prdt_cd								
+             , a.um_rslt_proc_cd										
+             , a.um_rslt_proc_ty_cd								
+             , a.um_rslt_speclty_drug_ind					
+             , a.um_rslt_spcf_tc_desc							
+             , a.um_rslt_spcf_minr_grp_desc				
+             , a.um_rslt_spcf_splty_condn_desc		
+             , a.um_rslt_ingrdnt_cost_amt					
+             , a.rbt_um_rslt_ingrdnt_cost_amt			
+             , a.um_rslt_day_suply_qty							
+             , a.um_rslt_thrpy_cst_per_day_amt	
+             , a.rbt_um_thrpy_cst_per_day_amt
+             , a.um_rslt_drug_list_clss_nm					
+             , a.um_rslt_drug_catlg_step_nm				
+             , a.um_rslt_save_pct									
+             , a.um_rslt_mth_save_amt							
+                 , a.rbt_um_rslt_mth_save_amt
+                 , b.client_acct_num
+                 , coalesce(c.denials, 0)    as denials
+                 , coalesce(d.total_auth, 0) as total_auth
+                 , e.tot_st_svc_id_cnt
+                 , e.tot_st_act_svc_id_cnt
+                 , a.drug_seltn_ty_nm
+            from   um_save_rpt_q1 a
+                   left join 
+                   clnt_acct_data b
+            on     a.entpr_cust_id=b.entpr_cust_id and a.um_act_svc_yr_mth=b.svc_yr_mth  
+                   left join 
+                   eoc_denials    c
+            on     a.um_act_ndc = c.ndc 
+                   left join 
+                   eoc_denial_tot    d
+            on     a.um_act_ndc = d.ndc 
+                   left join 
+                   st_conv_data   e
+            on     a.um_act_ndc = e.ndc 
+                   and  upper(trim(translate(REGEXP_REPLACE(a.um_rslt_rcd_ty_nm, '[^-a-zA-Z0-9_.@]+', ''),'  ',''))) in ('GSTLTRPAIDCLAIM','GSTREJPAIDCLAIM')
+            )   select * from um_save_rpt_temp 
+            )
+            """"""
+            print('query==>',query)
+            query = query.format(catalog=catalog, \
+                                cap_rpt_schema=cap_rpt_schema, \
+                                rebate=rebate,\
+                                ccw_schema_catalog=ccw_schema_catalog,\
+                                ccw_schema=ccw_schema \
+                                )
+            result=spark.sql(query)
+            logger.info('create BLD_UM_SAVE_RPT_TMP result ==> ' + result.__str__())
+
+        except Exception as error:
+           msg='Table creation error'+'=>'+'BLD_UM_SAVE_RPT '
+           logger.error('create_main_table Exception for ==>\n' + msg.__str__())
+           logger.error('create_main_table Exception for ==>\n' + error.__str__())
+           sys.exit(1)           
+           
+    def insert_overwrite_table(self):
+        try:
+            query = """"""insert overwrite table {catalog}.{cap_rpt_schema}.BLD_UM_SAVE_RPT 
+            select * from {catalog}.{cap_rpt_schema}.BLD_UM_SAVE_RPT_TMP""""""
+            query = query.format(catalog=catalog, \
+                            cap_rpt_schema=cap_rpt_schema
+                            )  
+            result = spark.sql(query)
+            logger.info('insert overwrite result ==> ' + result.__str__())          
+                  
+        except Exception as error:
+            msg='insert error'+'=>'+'BLD_UM_SAVE_RPT'
+            logger.error('insert_table Exception for ==>\n' + msg.__str__())
+            logger.error('insert_table Exception for ==>\n' + error.__str__())
+            sys.exit(1)     
+
+def main():
+    """"""Main Function""""""
+    logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+    ext_utils = CAPSchemaUtilis()
+    ext_utils.create_table()
+    ext_utils.insert_overwrite_table()
+    logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+
+main()

@@ -1,0 +1,104 @@
+@Library('conduit@latest') _
+
+env.MODULE_VERSION_FILE_PATH = "product.version"
+env.TERRAFORM_VERSION = '1.3.0'
+env.TERRAGRUNT_VERSION = '0.35.4'
+env.AUTH_TYPE = 'gatekeeper'
+String containerImage  = 'registry.cigna.com/enterprise-devops/aws-d-megatainer'
+// String containerImageSbt  = 'registry.cigna.com/cost-transparency/databricks'
+
+String containerVersion = '1.0.14-2'
+String containerVersionSbt = 'base-1.0.35'
+
+String devDeploymentRole = 'TEAM/DEPLOYER-CAPREPORTING'
+// String devDeploymentRole = 'tf/aqua-deployment'
+
+String devCloudServiceAccountName = 'jenkins-robot-dev'
+// String devCloudServiceAccountName = 'jenkins-robot-dev2'
+String testCloudServiceAccountName = 'jenkins-robot-test'
+String prodCloudServiceAccountName = 'jenkins-robot-prod'
+
+List<String> modules = [
+    "//module/databricks/capreporting"
+]
+
+String cloudNameOS = "edp-capreporting-openshift-devops1"
+String cloudNameEKS = "edp-capreporting-eks-jenkins-cluster-prod"
+
+cignaBuildFlow {
+    cloudName = "${cloudNameEKS}"
+    githubConnectionName = 'cigna-github'
+    phases = [
+        [
+            branchPattern: '.*',
+            lintingTypes: [
+                'plz': [
+                    verbosityFlag: '-vvv',
+                ]
+            ],
+           pleaseContainerImage  : "${containerImage}",
+           pleaseContainerVersion: "${containerVersion}",
+           sdlcEnvironment : 'Non-Prod',
+           runInAWS: false,
+           cloudName: "${cloudNameOS}"
+        ],
+         [
+            branchPattern: '.*',
+            buildType: 'plz',
+            container: [
+                 image  : "${containerImage}",
+                 version: "${containerVersion}",
+                 imagePullPolicy: "Always"
+             ],
+           sonarEnabled:false,
+           sonarQube: [
+               credentialsId: 'rapmpm-sonarqube-token',
+               scannerProperties: [
+                    'sonar.projectKey=RAPMPM',
+                    'sonar.projectName=RAPMPM',
+                    'sonar.sources=.',
+                    'sonar.inclusions=**/*.py',
+                ],
+            ],
+            checkmarxEnabled:true,
+            checkmarx: [
+                 credentialsId: 'capreporting_api',
+                 settings: [
+                     CX_PROJECT_TEAM_NAME: 'CAPREPORTING',
+                       CX_PROJECT_NAME: 'edp-capreporting',
+                       CX_EXCLUDE_FOLDER_LIST:'plz-out, logs, testing, third_party, utilities',
+                       CX_INCL_EXCL_FILE_LIST:"",
+                       CX_SCAN_TYPE:"AsyncScan"
+                 ]  
+             ],
+            sdlcEnvironment : 'Non-Prod',
+            runInAWS: false,
+            cloudName: "${cloudNameOS}"
+         ],         
+                   [
+            runInAWS: true,
+            cloudName: "${cloudNameEKS}",
+            aws:
+            [
+                cloudServiceAccountName: prodCloudServiceAccountName,
+                targetAccount: '423498800552',
+                region: 'us-east-1',
+                accountRoleName: devDeploymentRole
+            ],
+            branchPattern   : '.*',
+            container: [
+                image  : "${containerImage}",
+                version: "${containerVersion}",
+                imagePullPolicy: "Always"
+            ],
+            deploymentType  : 'plz',
+            alias           : 'deploy',
+            modules         : modules,
+            extraArgs       : 'prod',
+            verbosityFlag   : '-vvv',
+            sdlcEnvironment : 'Prod',
+            isProductionDeployment: false,
+            withEnv: ['ACCOUNT_NUMBER=423498800552']
+        ]
+    ]
+}

@@ -1,0 +1,90 @@
+import os
+import requests
+from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.contrib.operators.databricks_operator import DatabricksRunNowOperator, DatabricksSubmitRunOperator
+from airflow.utils.dates import days_ago
+from edputils.metrics import MetricsUtility
+from airflow.operators.python import PythonOperator
+import pendulum
+
+## Standard among most DAGs
+def on_databricks_submit_failure(context):
+    MetricsUtility.on_task_failure(context)
+    mattermost_url = "https://mm.sys.cigna.com/hooks/fpq8b6sgrbn69ef7e8cis9b99o"
+    data = {
+        "channel": "town-square",
+        "username": "airflow-bot",
+        "text": "test"
+    }
+    requests.post(url=mattermost_url, data=data)
+
+# Using filename as the DAG_ID
+DAG_ID = os.path.basename(__file__).replace(".py", "")
+
+# DEFAULT_ARGS get sent to all tasks
+DEFAULT_ARGS = {
+    'owner': 'airflow',
+    'depends_on_past': False,
+    'notebook_params': {
+        "MWAA_RUN_ID": "{{run_id}}",
+        "MWAA_DAG_ID": f"{DAG_ID}",
+        "MWAA_GUID": "{{ ti.xcom_pull(key='MWAA_GUID', task_ids='pipeline_started') }}"
+    }
+}
+
+with DAG(
+        dag_id=DAG_ID,
+        default_args=DEFAULT_ARGS,
+        access_control= {'TEAM-CAPREPORTING':{'can_read', 'can_edit'}},
+        schedule_interval=None, #'0 0 1 * *',#1st Day of Each Month
+        start_date=datetime(2023,11,1),
+        on_success_callback=MetricsUtility.on_dag_success,
+        on_failure_callback=MetricsUtility.on_dag_failure,
+        tags=["capreporting_migration"]
+) as dag:
+    # Write start metric event.
+    # The PythonOperator will get called automatically.
+    pipeline_started = PythonOperator(
+        task_id='pipeline_started',
+        provide_context=True,
+        python_callable=MetricsUtility.airflow_pipeline_start
+        )
+    
+    run_dag = DatabricksRunNowOperator(
+        task_id="GDBO6QM6",
+        job_id= [[GDBO6QM6]],  ## Referencing the name we defined in databricks_jobsv3.tf
+        on_failure_callback=on_databricks_submit_failure,
+        on_success_callback=MetricsUtility.on_task_success,
+        do_xcom_push=True)
+
+    run_dag
+
+#scheduling    
+schedule_interval=None,#Adhoc
+start_date=days_ago(1),
+
+schedule_interval=None,#'0 0 * * *',#Daily
+start_date=days_ago(1),
+
+schedule_interval=None, #'0 0 1 * *',#1st Day of Each Month
+start_date=datetime(2023,11,1)
+
+schedule_interval=None,#'0 0 * * *',#Daily
+start_date=days_ago(1),
+
+#schedule_interval='0 9 28-31 * * [ "$(date +\%m -d tomorrow)" != "$(date +\%m)" ]',#Last day of each Month
+schedule_interval=None,#'0 0 L * *',
+start_date=datetime(2023,10,31),
+
+schedule_interval=None,#'0 0 6 * *',#6th Day of Each Month
+start_date=datetime(2023,11,6),
+
+schedule_interval=None,#'0 0 15 */3 *',#Every Quarter 15th
+start_date=datetime(2023,9,15),
+
+schedule_interval=None,#'0 0 * * 2',#Every Tuesday Weekly
+start_date=datetime(2023,11,14),
+
+ schedule_interval=None,#'0 0 * * 0',  #Every Saturday at 7 PM EST
+ #schedule_interval='0 23 * * 6',#Every Saturday at 7 PM EST
