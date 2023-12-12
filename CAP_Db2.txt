@@ -1,0 +1,87 @@
+"import datetime
+import logging
+import sys 
+import boto3
+import json
+
+MSG_FORMAT      = '%(asctime)s %(levelname)s %(name)s: %(message)s'
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+logging.basicConfig(format=MSG_FORMAT, datefmt=DATETIME_FORMAT)
+logger          = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+env               = dbutils.widgets.get('env')
+db2env            = dbutils.widgets.get('db2env')  
+secret_name       = dbutils.widgets.get('db2_secret')
+region_name       = dbutils.widgets.get('region_name')
+db2driver         = dbutils.widgets.get('db2driver')
+db2port           = dbutils.widgets.get('db2port') 
+db2host           = dbutils.widgets.get('db2host')
+catalog           = dbutils.widgets.get('catalog')
+cap_rpt_schema    = dbutils.widgets.get('cap_rpt_schema')
+tablelist         = ['bld_ccc_pregc40','bld_ccc_provider_cntrct','bld_ccc_vfr',
+                     'bld_marketdesc','bld_report_period_ccc','bld_scc_baseline',
+                     'bld_scc_bill_tins','bld_ccc_provider_epi'
+                    ]
+
+class CAPSchemaUtilis(object):
+    """"""main Class""""""
+    def __init__(self):
+        """"""
+        Constructor for the class `CAPSchemaUtilis`
+        """"""
+        self.env = env
+            
+    def db2_jdbc_connection(self):
+        try:
+            jdbcurl=""jdbc:db2://{db2host}:{db2port}/{db2env}:sslConnection=true;"".format(db2host=db2host,db2port=db2port,db2env=db2env)
+            logger.info('JDBC_URL ==> '+jdbcurl.__str__())
+            secrets_client = boto3.client(service_name='secretsmanager',region_name=region_name)
+            secret = json.loads(secrets_client.get_secret_value(SecretId=secret_name).get('SecretString'))
+            return jdbcurl,secret['user'],secret['password']
+
+        except Exception as error:
+            logger.error('JDBC Connection Failed for Host ==>\n'+db2host+':'+db2port+' \n'+'Error==>'+error.__str__())
+            sys.exit(1)
+    
+    def table_export(self):
+        
+        for tablename in tablelist:
+            try:
+                logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+                logger.info('Job Start for tablename ==> '+tablename.__str__())
+                
+                jdbcurl,db2user,bd2pwd=self.db2_jdbc_connection()
+                logger.info('jdbcurl ==> '+jdbcurl)
+                logger.info('db2user ==> '+db2user)
+                db2table='appdm.'+tablename
+                
+                logger.info('Table Data ==> '+db2table)
+                query=""""""SELECT *FROM {catalog}.{cap_rpt_schema}.{tablename}"""""".format(catalog=catalog,cap_rpt_schema=cap_rpt_schema,tablename=tablename)
+                df=spark.sql(query)  
+                          
+                df.write.mode(""overwrite"").format(""jdbc"")\
+                    .option(""truncate"",""true"")\
+                    .option(""driver"", db2driver)\
+                    .option(""url"", jdbcurl)\
+                    .option(""user"", db2user)\
+                    .option(""password"", bd2pwd)\
+                    .option(""dbtable"", db2table)\
+                    .save()
+                df.show(1) 
+                logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+                
+            except Exception as error:
+                logger.error(
+                    'export failure for table ==>\n' + tablename)
+                logger.error(
+                    'export failure for table ==>\n' + error.__str__())
+    
+def main():
+    """"""Main Function""""""
+    logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+    ext_utils = CAPSchemaUtilis()
+    ext_utils.table_export()
+    logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+
+main()"

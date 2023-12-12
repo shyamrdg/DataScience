@@ -1,0 +1,100 @@
+"import datetime
+import logging
+import sys 
+import boto3
+import json
+
+MSG_FORMAT      = '%(asctime)s %(levelname)s %(name)s: %(message)s'
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+logging.basicConfig(format=MSG_FORMAT, datefmt=DATETIME_FORMAT)
+logger          = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+env                     = dbutils.widgets.get('env')
+pharma_oraenv           = dbutils.widgets.get('pharma_oraenv')
+pharmadb_secret         = dbutils.widgets.get('pharmadb_secret')
+region_name             = dbutils.widgets.get('region_name')
+pharma_oradriver        = dbutils.widgets.get('pharma_oradriver')
+pharma_oraport          = dbutils.widgets.get('pharma_oraport')
+pharma_orahost          = dbutils.widgets.get('pharma_orahost')
+catalog                 = dbutils.widgets.get('catalog')
+cap_rpt_schema          = dbutils.widgets.get('cap_rpt_schema')
+cap_raw_schema          = dbutils.widgets.get('cap_raw_schema')
+
+tablelist               = ['acct_ben_plan_mv','acct_ben_plan_opt_mv','acct_mv',
+                           'drug_list_drug_mv','drug_list_vrsn_mv','drug_vrsn_mv','frmlry_vrsn_mv',
+                           'phrm_loc_mv','phrm_nt_mv','phrm_prov_mv','rds_d01_acct_grp_clncl_mv',
+                           'rds_d01_um_prodt_prog_drug_mv','um_pkg_mv',
+                           'um_pkg_vrsn_mv','um_pkg_vrsn_prog_mv','um_prog_edit_elemnt_mv',
+                           'um_prog_edit_elemnt_val_mv','um_prog_mv','um_prog_vrsn_alt_drug_mv',
+                           'um_prog_vrsn_critr_drug_mv','um_prog_vrsn_critr_elemnt_mv',
+                           'um_prog_vrsn_drug_list_mv','um_prog_vrsn_mv'
+                          ] 
+
+class CAPSchemaUtilis(object):
+    """"""main Class""""""
+    def __init__(self):
+        """"""
+        Constructor for the class `CAPSchemaUtilis`
+        """"""
+        self.env = env
+            
+    def db2_jdbc_connection(self):
+        try:
+            jdbcurl=""jdbc:oracle:thin:@//{pharma_orahost}:{pharma_oraport}/{pharma_oraenv}"".format(pharma_orahost=pharma_orahost,pharma_oraport=pharma_oraport,pharma_oraenv=pharma_oraenv)
+            logger.info('Pharma ORA JDBC_URL ==> '+jdbcurl.__str__())
+            secrets_client = boto3.client(service_name='secretsmanager',region_name=region_name)
+            secret = json.loads(secrets_client.get_secret_value(SecretId=pharmadb_secret).get('SecretString'))
+            return jdbcurl,secret['user'],secret['password']
+
+        except Exception as error:
+            logger.error('Pharma ORA JDBC Connection Failed for Host ==>\n'+pharma_orahost+':'+pharma_oraport+' \n'+'Error==>'+error.__str__())
+            sys.exit(1)
+    
+    def table_export(self):
+        
+        for tablename in tablelist:
+            try:
+                logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+                logger.info('Job Start for tablename ==> '+tablename.__str__())
+                
+                jdbcurl,pharma_dbuser,pharma_bdpwd=self.db2_jdbc_connection()
+                logger.info('jdbcurl           ==> '+jdbcurl)
+                logger.info('pharma_dbuser     ==> '+pharma_dbuser)
+                logger.info('pharma_oradriver  ==> '+pharma_oradriver)
+                pharmatable='phrmrdsd_o.'+tablename
+
+                drop_query=""DROP TABLE IF EXISTS {catalog}.{cap_raw_schema}.{tablename}"".format(catalog=catalog,cap_raw_schema=cap_raw_schema,tablename=tablename)
+                spark.sql(drop_query)
+
+                df = spark.read\
+                    .format(""jdbc"")\
+                    .option(""user"",pharma_dbuser)\
+                    .option(""password"",pharma_bdpwd)\
+                    .option(""driver"", pharma_oradriver)\
+                    .option(""url"",jdbcurl)\
+                    .option(""dbtable"", pharmatable)\
+                    .option(""fetchsize"", 50000)\
+                    .load()                
+                df.show(1)
+
+                finaltable=catalog+"".""+cap_raw_schema+"".""+tablename
+                #schema=spark.table(finaltable).schema
+                df.write.mode('overwrite').format('delta').option('mergeSchema','true').saveAsTable(finaltable)
+                #df.write.mode('append').format('delta').option(schema,schema).saveAsTable(finaltable)
+                logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+                
+            except Exception as error:
+                logger.error(
+                    'export failure for table ==>\n' + tablename)
+                logger.error(
+                    'export failure for table ==>\n' + error.__str__())
+    
+def main():
+    """"""Main Function""""""
+    logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+    ext_utils = CAPSchemaUtilis()
+    ext_utils.table_export()
+    logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+
+main()"

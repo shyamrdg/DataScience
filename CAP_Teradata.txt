@@ -1,0 +1,147 @@
+"import datetime
+import logging
+import sys 
+import boto3
+import json
+
+MSG_FORMAT      = '%(asctime)s %(levelname)s %(name)s: %(message)s'
+DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+logging.basicConfig(format=MSG_FORMAT, datefmt=DATETIME_FORMAT)
+logger          = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+env                     = dbutils.widgets.get('env')
+v2v_teraenv             = dbutils.widgets.get('v2v_teraenv')
+v2v_teradb_secret       = dbutils.widgets.get('v2v_teradb_secret')
+v2v_teradb_secret2      = dbutils.widgets.get('v2v_teradb_secret2')
+region_name             = dbutils.widgets.get('region_name')
+v2v_teradriver          = dbutils.widgets.get('v2v_teradriver')
+v2v_terahost            = dbutils.widgets.get('v2v_terahost')
+catalog                 = dbutils.widgets.get('catalog')
+cap_rpt_schema          = dbutils.widgets.get('cap_rpt_schema')
+cap_raw_schema          = dbutils.widgets.get('cap_raw_schema')
+
+tablelist               = ['clbrtn_demg','req_clbrtn_ai_agg_ibis','req_clbrtn_alignment_agg_ibis',
+                           'req_clbrtn_ebm_agg_ibis','req_clbrtn_ed_agg_ibis','req_clbrtn_ip_agg_ibis',
+                           'req_clbrtn_paymt_cust_dtl_ibis','req_clbrtn_perf_drvr_ibis',
+                           'req_clbrtn_sc_agg_ibis','req_clbrtn_tmc_agg_ibis','req_parameters_ibis',
+                           'v2v_vrsn_audit'
+                         ]
+
+tablelist1               = ['idpp_client_struc','idpp_cust_enrlmt','idpp_cust_info','idpp_mbrshp_dtl']
+
+class CAPSchemaUtilis(object):
+    """"""main Class""""""
+    def __init__(self):
+        """"""
+        Constructor for the class `CAPSchemaUtilis`
+        """"""
+        self.env = env
+            
+    def db2_jdbc_connection(self,SecretId):
+        try:
+            jdbcurl=""jdbc:teradata://{v2v_terahost}/DATABASE={v2v_teraenv},LOGMECH=LDAP,COLUMN_NAME=ON"".format(v2v_terahost=v2v_terahost,v2v_teraenv=v2v_teraenv)
+            logger.info('V2V TERADATA JDBC_URL ==> '+jdbcurl.__str__())
+            secrets_client = boto3.client(service_name='secretsmanager',region_name=region_name)
+            secret = json.loads(secrets_client.get_secret_value(SecretId=SecretId).get('SecretString'))
+            return jdbcurl,secret['user'],secret['password']
+
+        except Exception as error:
+            logger.error('V2V TERADATA JDBC Connection Failed for ENV ==>\n'+v2v_terahost+':'+v2v_teraenv+' \n'+'Error==>'+error.__str__())
+            sys.exit(1)
+    
+    def table_export(self):
+        
+        for tablename in tablelist:
+            
+            try:
+                logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+                logger.info('Job Start for tablename ==> '+tablename.__str__())
+                
+                jdbcurl,tera_dbuser,tera_bdpwd=self.db2_jdbc_connection(v2v_teradb_secret)
+                logger.info('jdbcurl ==> '+jdbcurl)
+                logger.info('tera_dbuser ==> '+tera_dbuser)
+                
+                if tablename=='clbrtn_demg':
+                    teratable='ccw_rptview_prd.'+tablename
+                    finaltable=catalog+"".""+cap_raw_schema+"".""+tablename+""_ibis""
+                elif tablename=='v2v_vrsn_audit':
+                    teratable='ccw_rptview_v2v_prd.'+tablename
+                    finaltable=catalog+"".""+cap_raw_schema+"".""+tablename+""_ibis""
+                else:
+                    teratable='ccw_rptview_v2v_prd.'+tablename
+                    finaltable=catalog+"".""+cap_raw_schema+"".""+tablename[:-5]                     
+                
+                drop_query=""DROP TABLE IF EXISTS {finaltable}"".format(finaltable=finaltable)
+                spark.sql(drop_query)
+
+                df = spark.read\
+                    .format(""jdbc"")\
+                    .option(""user"",tera_dbuser)\
+                    .option(""password"",tera_bdpwd)\
+                    .option(""driver"", v2v_teradriver)\
+                    .option(""url"",jdbcurl)\
+                    .option(""dbtable"", teratable)\
+                    .option(""fetchsize"", 50000)\
+                    .load()                
+                df.persist()
+                reccnt=df.count()
+                logger.info('Query ==>\n' +reccnt.__str__())
+                
+                df.write.mode('overwrite').format('delta').option('mergeSchema','true').saveAsTable(finaltable)
+                #df.write.mode('overwrite').format('delta').option(schema,schema).saveAsTable(finaltable)
+                df.unpersist()
+                logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+                
+            except Exception as error:
+                logger.error(
+                    'export failure for table ==>\n' + tablename)
+                logger.error(
+                    'export failure for table ==>\n' + error.__str__())
+            
+        for tablename in tablelist1:
+            try:
+                logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+                logger.info('Job Start for tablename ==> '+tablename.__str__())
+                
+                jdbcurl,tera_dbuser,tera_bdpwd=self.db2_jdbc_connection(v2v_teradb_secret2)
+                logger.info('jdbcurl ==> '+jdbcurl)
+                logger.info('tera_dbuser ==> '+tera_dbuser)
+                teratable='ccw_lz_prd.'+tablename
+                finaltable=catalog+"".""+cap_raw_schema+"".""+tablename+""_ibis""
+                drop_query=""DROP TABLE IF EXISTS {finaltable}"".format(finaltable=finaltable)
+                spark.sql(drop_query)
+
+                df = spark.read\
+                    .format(""jdbc"")\
+                    .option(""user"",tera_dbuser)\
+                    .option(""password"",tera_bdpwd)\
+                    .option(""driver"", v2v_teradriver)\
+                    .option(""url"",jdbcurl)\
+                    .option(""dbtable"", teratable)\
+                    .option(""fetchsize"", 50000)\
+                    .load()                
+                
+                df.persist()
+                reccnt=df.count()
+                logger.info('Query ==>\n' +reccnt.__str__())
+
+                df.write.mode('overwrite').format('delta').option('mergeSchema','true').saveAsTable(finaltable)
+                #df.write.mode('overwrite').format('delta').option(schema,schema).saveAsTable(finaltable)
+                df.unpersist()
+                logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+                
+            except Exception as error:
+                logger.error(
+                    'export failure for table ==>\n' + tablename)
+                logger.error(
+                    'export failure for table ==>\n' + error.__str__())
+                
+def main():
+    """"""Main Function""""""
+    logger.info('Job Start Time ==> '+datetime.datetime.now().__str__())
+    ext_utils = CAPSchemaUtilis()
+    ext_utils.table_export()
+    logger.info('Job End Time ==> '+datetime.datetime.now().__str__())
+
+main()"
